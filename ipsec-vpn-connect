@@ -1,0 +1,181 @@
+#!/bin/sh
+
+exec 1>&2
+
+error() {
+	echo "$@" >&2
+	exit 1
+}
+
+# Default settings.
+DEBUG=0
+
+# Read settings in this file.
+[ -z "$1" ] && error "Usage: $0 <configuration file>"
+[ -r "$1" ] || error "Could not read configuration file $1."
+. "`readlink -f $1`"
+[ -z "$VPN_IP" ] && error "VPN_IP is not set"
+[ -z "$TUNNEL_PSK" ] && error "TUNNEL_PSK is not set"
+[ -z "$VPN_USERNAME" ] && error "VPN_USERNAME is not set"
+[ -z "$VPN_PASSWORD" ] && error "VPN_PASSWORD is not set"
+
+# Ensure we are root.
+[ "`id -u`" = 0 ] || error "You must be root to run this program."
+
+# Helper function to find the binaries we need.
+check_prereqs() {
+	unsatisfied=
+	for i in "$@" ; do
+		command -v $i > /dev/null 2>&1 || unsatisfied="$unsatisfied $i"
+	done
+	echo $unsatisfied
+	[ -z "$unsatisfied" ]
+}
+
+# Helper function to kill a process, first giving it a chance.
+graceful_kill() {
+	pid=$1
+	all=$2
+	tries=5
+	while [ $tries -gt 0 ] ; do
+		kill$all $pid > /dev/null 2>&1
+		tries=$(($tries-1))
+		sleep 0.5
+		kill$all -0 $pid > /dev/null 2>&1 || break
+	done
+	kill$all -9 $pid > /dev/null 2>&1
+}
+
+# Check for prerequisite binaries.
+missing_prereqs=`check_prereqs ip racoon xl2tpd setkey` || \
+	error "Missing required utilities: $missing_prereqs"
+
+# Create a temporary directory where we will do our work.
+work_dir=`mktemp -d` || exit 1
+[ -n "$work_dir" ] || exit 1
+
+cd $work_dir
+
+# Ensure cleanup is graceful. This is in theory the only way out of this
+# script.
+cleanup() {
+	[ -n "$xl2tpd_pid" ] && graceful_kill $xl2tpd_pid
+	[ -n "$racoon_pid" ] && graceful_kill $racoon_pid
+	[ "$SEND_ALL_TRAFFIC" = 1 ] && ip route delete $VPN_IP
+	[ -n "$work_dir" ] && rm -rf "$work_dir"
+	exit 0
+}
+trap cleanup INT HUP TERM QUIT
+
+# Create a valid racoon.conf
+racoon_debug_level="notify"
+[ "$DEBUG" -ge 1 ] && racoon_debug_level="info"
+[ "$DEBUG" -ge 2 ] && racoon_debug_level="debug"
+cat <<EOT > racoon.conf
+log $racoon_debug_level;
+path pre_shared_key "psk.txt";
+
+remote $VPN_IP {
+	exchange_mode main;
+	nat_traversal on;
+	proposal {
+		encryption_algorithm 3des;
+		hash_algorithm sha1;
+		authentication_method pre_shared_key;
+		dh_group modp1024;
+	}
+	generate_policy on;
+}
+
+sainfo address 0.0.0.0/0 udp address $VPN_IP [1701] udp {
+        encryption_algorithm aes 256, aes, 3des;
+        authentication_algorithm hmac_sha1, hmac_md5;
+        compression_algorithm deflate;
+}
+
+sainfo address $VPN_IP [1701] udp address 0.0.0.0/0 udp {
+        encryption_algorithm aes 256, aes, 3des;
+        authentication_algorithm hmac_sha1, hmac_md5;
+        compression_algorithm deflate;
+}
+EOT
+
+# Create pre-shared key file.
+echo -n > psk.txt
+chmod 600 psk.txt
+cat <<EOT > psk.txt
+* $TUNNEL_PSK
+EOT
+
+# Create IPSec routing policy
+cat <<EOT > ipsec.conf
+#!/usr/sbin/setkey -f
+
+flush;
+spdflush;
+spdadd 0.0.0.0/0 $VPN_IP[l2tp] udp -P out ipsec
+	esp/transport//require;
+spdadd $VPN_IP[l2tp] 0.0.0.0/0 udp -P in ipsec
+	esp/transport//require;
+EOT
+
+# Create xl2tpd configuration
+cat <<EOT > xl2tpd.conf
+[lac vpn1]
+lns = $VPN_IP
+redial = yes
+redial timeout = 10
+max redials = 10
+require pap = no
+require chap = yes
+refuse pap = yes
+refuse chap = no
+pppoptfile = options.xl2tpd
+EOT
+
+# Create options.xl2tpd
+cat <<EOT > options.xl2tpd
+noauth
+EOT
+[ "$ENABLE_IPV6" = "1" ] && echo '+ipv6' >> options.xl2tpd
+if [ "$SEND_ALL_TRAFFIC" = "1" ] ; then
+	echo defaultroute >> options.xl2tpd
+	echo replacedefaultroute >> options.xl2tpd
+fi
+if [ "$DEBUG" -ge 1 ] ; then
+	echo debug >> options.xl2tpd
+	echo logfd 2 >> options.xl2tpd
+fi
+
+# Fix a route to the VPN in case routing tables change.
+ip route add `ip route get $VPN_IP | head -1`
+
+# Set up IPSec policy
+setkey -f ipsec.conf
+
+# Run racoon.
+racoon -f racoon.conf -vF &
+racoon_pid=$!
+
+# Is there a better way to find out if racoon is ready? Just give it a second.
+sleep 1
+
+# Check for existing xl2tpd instances. Kill them.
+graceful_kill xl2tpd all
+
+# Run xl2tpd.
+xl2tpd -c xl2tpd.conf -C xl2tpd-control -D &
+xl2tpd_pid=$!
+
+# Wait for xl2tpd to start.
+until [ -e xl2tpd-control ] ; do sleep 0.2 ; done
+
+# Send connect message.
+echo "c vpn1 $VPN_USERNAME $VPN_PASSWORD" > xl2tpd-control
+
+# Voila. Now do nothing, wait for a Ctrl-C or other signal to kill us.
+# And then we will cleanup().
+while true ; do
+	echo "Press Ctrl-C to disconnect."
+	read nothing
+done
