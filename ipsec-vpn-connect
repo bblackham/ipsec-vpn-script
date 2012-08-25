@@ -13,11 +13,15 @@ DEBUG=0
 # Read settings in this file.
 [ -z "$1" ] && error "Usage: $0 <configuration file>"
 [ -r "$1" ] || error "Could not read configuration file $1."
-. "`readlink -f $1`"
+cfgfile="`readlink -f $1`"
+. $cfgfile
 [ -z "$VPN_IP" ] && error "VPN_IP is not set"
 [ -z "$TUNNEL_PSK" ] && error "TUNNEL_PSK is not set"
 [ -z "$VPN_USERNAME" ] && error "VPN_USERNAME is not set"
 [ -z "$VPN_PASSWORD" ] && error "VPN_PASSWORD is not set"
+
+# Base the VPN name on a hash of the config file path.
+xl2tpd_vpnname=tmpvpn_`echo $cfgfile | md5sum | cut -c1-8`
 
 # Ensure we are root.
 [ "`id -u`" = 0 ] || error "You must be root to run this program."
@@ -47,8 +51,11 @@ graceful_kill() {
 }
 
 # Check for prerequisite binaries.
-missing_prereqs=`check_prereqs ip racoon xl2tpd setkey` || \
+missing_prereqs=`check_prereqs ip racoon xl2tpd-control setkey killall` || \
 	error "Missing required utilities: $missing_prereqs"
+
+# Ensure xl2tpd is running.
+killall -0 xl2tpd >/dev/null 2>&1 || error "Did not detect xl2tpd running?"
 
 # Create a temporary directory where we will do our work.
 work_dir=`mktemp -d` || exit 1
@@ -59,10 +66,12 @@ cd $work_dir
 # Ensure cleanup is graceful. This is in theory the only way out of this
 # script.
 cleanup() {
-	[ -n "$xl2tpd_pid" ] && graceful_kill $xl2tpd_pid
+	xl2tpd-control disconnect $xl2tpd_vpnname
+	xl2tpd-control remove $xl2tpd_vpnname
 	[ -n "$racoon_pid" ] && graceful_kill $racoon_pid
 	[ "$SEND_ALL_TRAFFIC" = 1 ] && ip route delete $VPN_IP
 	[ -n "$work_dir" ] && rm -rf "$work_dir"
+	[ -n "$logger_pid" ] && graceful_kill $logger_pid
 	exit 0
 }
 trap cleanup INT HUP TERM QUIT
@@ -169,18 +178,6 @@ spdadd $VPN_IP[l2tp] 0.0.0.0/0 udp -P in ipsec
 	esp/transport//require;
 EOT
 
-# Create xl2tpd configuration
-cat <<EOT > xl2tpd.conf
-[lac vpn1]
-lns = $VPN_IP
-redial = no
-require pap = no
-require chap = yes
-refuse pap = yes
-refuse chap = no
-pppoptfile = options.xl2tpd
-EOT
-
 # Create options.xl2tpd
 cat <<EOT > options.xl2tpd
 noauth
@@ -192,7 +189,12 @@ if [ "$SEND_ALL_TRAFFIC" = "1" ] ; then
 fi
 if [ "$DEBUG" -ge 1 ] ; then
 	echo debug >> options.xl2tpd
-	echo logfd 2 >> options.xl2tpd
+fi
+
+# Start logging.
+if [ "$DEBUG" -ge 1 ] ; then
+	tail --lines=0 -f /var/log/syslog |grep --line-buffered 'pppd\|racoon\|xl2tpd' &
+	logger_pid=$!
 fi
 
 # Fix a route to the VPN in case routing tables change.
@@ -202,27 +204,28 @@ ip route add `ip route get $VPN_IP | head -1`
 setkey -f ipsec.conf
 
 # Run racoon.
-racoon -f racoon.conf -vF &
+racoon -f racoon.conf -F &
 racoon_pid=$!
 
 # Is there a better way to find out if racoon is ready? Just give it a second.
 sleep 1
 
-# Check for existing xl2tpd instances. Kill them.
-graceful_kill xl2tpd all
-
-# Run xl2tpd.
-xl2tpd -c xl2tpd.conf -C xl2tpd-control -D &
-xl2tpd_pid=$!
-
-# Wait for xl2tpd to start.
-until [ -e xl2tpd-control ] ; do sleep 0.2 ; done
+# Create xl2tpd configuration
+xl2tpd-control remove $xl2tpd_vpnname
+xl2tpd-control add $xl2tpd_vpnname \
+	"lns=$VPN_IP" \
+	"redial=no" \
+	"require pap=no" \
+	"require chap = yes" \
+	"refuse pap = yes" \
+	"refuse chap = no" \
+	"pppoptfile = `readlink -f options.xl2tpd`"
 
 # Send connect message.
-# Well, what we actually do is continually retry connecting to the VPN. If it's
-# already connected, it does nothing. If it has disconnected, this will force a
-# reconnect.
+xl2tpd-control connect $xl2tpd_vpnname $VPN_USERNAME $VPN_PASSWORD
+
+# Do nothing forever, waiting for a Ctrl-C or other terminating signal.
+# Only then will we cleanup().
 while : ; do
-	echo "c vpn1 $VPN_USERNAME $VPN_PASSWORD" > xl2tpd-control
-	sleep 15
+	read nothing
 done

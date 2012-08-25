@@ -34,12 +34,25 @@ To start the VPN, simply run
 
   $ sudo ipsec-vpn-connect vpn.cfg
 
-This will print the output of racoon, xl2tpd and ppp (if debugging is enabled)
-to stdout. The script will not return to the command prompt until the VPN is
-terminated (e.g. with Ctrl-C, or some other signal).
+This will print the output of racoon, xl2tpd and ppp (if debugging is enabled),
+all captured from /var/log/syslog, and printed to stdout. The script will not
+return to the command prompt until terminated (e.g. with Ctrl-C, or some other
+signal).
 
-Problems
---------
+Known issues
+------------
+
+ * If the VPN is disconnected from the server, it is never detected.
+   There's no sane way to query xl2tpd.
+
+ * Redial does not work. As the password is given in the connect command,
+   xl2tpd does not cache it, and therefore any attempt to redial will fail to
+   authenticate.
+
+ * Certificate-based authentication is not supported.
+
+Debugging
+---------
 
 The first step to debugging problems is to set DEBUG=2 in your vpn.cfg file.
 This should give a whole lot more information on what's going on in racoon and
