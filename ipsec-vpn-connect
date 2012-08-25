@@ -173,9 +173,7 @@ EOT
 cat <<EOT > xl2tpd.conf
 [lac vpn1]
 lns = $VPN_IP
-redial = yes
-redial timeout = 10
-max redials = 10
+redial = no
 require pap = no
 require chap = yes
 refuse pap = yes
@@ -221,11 +219,10 @@ xl2tpd_pid=$!
 until [ -e xl2tpd-control ] ; do sleep 0.2 ; done
 
 # Send connect message.
-echo "c vpn1 $VPN_USERNAME $VPN_PASSWORD" > xl2tpd-control
-
-# Voila. Now do nothing, wait for a Ctrl-C or other signal to kill us.
-# And then we will cleanup().
-while true ; do
-	echo "Press Ctrl-C to disconnect."
-	read nothing
+# Well, what we actually do is continually retry connecting to the VPN. If it's
+# already connected, it does nothing. If it has disconnected, this will force a
+# reconnect.
+while : ; do
+	echo "c vpn1 $VPN_USERNAME $VPN_PASSWORD" > xl2tpd-control
+	sleep 15
 done
