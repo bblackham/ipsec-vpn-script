@@ -35,6 +35,17 @@ To start the VPN, simply run
   $ sudo ipsec-vpn-connect vpn.cfg
 
 This will print the output of racoon, xl2tpd and ppp (if debugging is enabled)
-to the stderr. The script will not return to the command prompt until the VPN
+to the stdout. The script will not return to the command prompt until the VPN
 is terminated (e.g. with Ctrl-C, or some other signal).
+
+Problems
+--------
+
+The first step to debugging problems is to set DEBUG=2 in your vpn.cfg file.
+This should give a whole lot more information on what's going on in racoon and
+pppd.  Now, whether or not you can make sense of it to fix it, is your problem.
+You could pipe this to a file (append "| tee ipsec.log") and ask somebody for
+help.
+
+Good luck.
 
