@@ -75,28 +75,78 @@ cat <<EOT > racoon.conf
 log $racoon_debug_level;
 path pre_shared_key "psk.txt";
 
+# Remote configuration based loosely on what OS X does.
 remote $VPN_IP {
+	doi ipsec_doi;
+	situation identity_only;
 	exchange_mode main;
+	verify_identifier off;
+	initial_contact on;
+	support_proxy on;
 	nat_traversal on;
+	proposal_check obey;
+
 	proposal {
-		encryption_algorithm 3des;
-		hash_algorithm sha1;
 		authentication_method pre_shared_key;
-		dh_group modp1024;
+		hash_algorithm sha1;
+		encryption_algorithm aes 256;
+		lifetime time 3600 sec;
+		dh_group 2;
 	}
-	generate_policy on;
+
+	proposal {
+		authentication_method pre_shared_key;
+		hash_algorithm md5;
+		encryption_algorithm aes 256;
+		lifetime time 3600 sec;
+		dh_group 2;
+	}
+
+	proposal {
+		authentication_method pre_shared_key;
+		hash_algorithm sha1;
+		encryption_algorithm aes;
+		lifetime time 3600 sec;
+		dh_group 2;
+	}
+
+	proposal {
+		authentication_method pre_shared_key;
+		hash_algorithm md5;
+		encryption_algorithm aes;
+		lifetime time 3600 sec;
+		dh_group 2;
+	}
+
+	proposal {
+		authentication_method pre_shared_key;
+		hash_algorithm sha1;
+		encryption_algorithm 3des;
+		lifetime time 3600 sec;
+		dh_group 2;
+	}
+
+	proposal {
+		authentication_method pre_shared_key;
+		hash_algorithm md5;
+		encryption_algorithm 3des;
+		lifetime time 3600 sec;
+		dh_group 2;
+	}
 }
 
 sainfo address 0.0.0.0/0 udp address $VPN_IP [1701] udp {
-        encryption_algorithm aes 256, aes, 3des;
-        authentication_algorithm hmac_sha1, hmac_md5;
-        compression_algorithm deflate;
+	encryption_algorithm aes 256, aes, 3des;
+	authentication_algorithm hmac_sha1, hmac_md5;
+	compression_algorithm deflate;
+	lifetime time 3600 sec;
 }
 
 sainfo address $VPN_IP [1701] udp address 0.0.0.0/0 udp {
-        encryption_algorithm aes 256, aes, 3des;
-        authentication_algorithm hmac_sha1, hmac_md5;
-        compression_algorithm deflate;
+	encryption_algorithm aes 256, aes, 3des;
+	authentication_algorithm hmac_sha1, hmac_md5;
+	compression_algorithm deflate;
+	lifetime time 3600 sec;
 }
 EOT
 
