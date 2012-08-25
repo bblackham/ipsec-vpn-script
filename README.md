@@ -35,8 +35,8 @@ To start the VPN, simply run
   $ sudo ipsec-vpn-connect vpn.cfg
 
 This will print the output of racoon, xl2tpd and ppp (if debugging is enabled)
-to the stdout. The script will not return to the command prompt until the VPN
-is terminated (e.g. with Ctrl-C, or some other signal).
+to stdout. The script will not return to the command prompt until the VPN is
+terminated (e.g. with Ctrl-C, or some other signal).
 
 Problems
 --------
