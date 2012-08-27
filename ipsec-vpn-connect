@@ -94,6 +94,7 @@ remote $VPN_IP {
 	support_proxy on;
 	nat_traversal on;
 	proposal_check obey;
+	generate_policy on;
 
 	proposal {
 		authentication_method pre_shared_key;
@@ -144,14 +145,14 @@ remote $VPN_IP {
 	}
 }
 
-sainfo address 0.0.0.0/0 udp address $VPN_IP [1701] udp {
+sainfo address 0.0.0.0/0 udp address ${VPN_IP} [1701] udp {
 	encryption_algorithm aes 256, aes, 3des;
 	authentication_algorithm hmac_sha1, hmac_md5;
 	compression_algorithm deflate;
 	lifetime time 3600 sec;
 }
 
-sainfo address $VPN_IP [1701] udp address 0.0.0.0/0 udp {
+sainfo address ${VPN_IP} [1701] udp address 0.0.0.0/0 udp {
 	encryption_algorithm aes 256, aes, 3des;
 	authentication_algorithm hmac_sha1, hmac_md5;
 	compression_algorithm deflate;
@@ -164,18 +165,6 @@ echo -n > psk.txt
 chmod 600 psk.txt
 cat <<EOT > psk.txt
 * $TUNNEL_PSK
-EOT
-
-# Create IPSec routing policy
-cat <<EOT > ipsec.conf
-#!/usr/sbin/setkey -f
-
-flush;
-spdflush;
-spdadd 0.0.0.0/0 $VPN_IP[l2tp] udp -P out ipsec
-	esp/transport//require;
-spdadd $VPN_IP[l2tp] 0.0.0.0/0 udp -P in ipsec
-	esp/transport//require;
 EOT
 
 # Create options.xl2tpd
@@ -198,10 +187,17 @@ if [ "$DEBUG" -ge 1 ] ; then
 fi
 
 # Fix a route to the VPN in case routing tables change.
-ip route add `ip route get $VPN_IP | head -1`
+ip route add `ip route get ${VPN_IP} | head -1`
 
 # Set up IPSec policy
-setkey -f ipsec.conf
+cat <<EOT | setkey -c
+spddelete 0.0.0.0/0 ${VPN_IP}[l2tp] udp -P out ;
+spddelete ${VPN_IP}[l2tp] 0.0.0.0/0 udp -P in ;
+spdadd 0.0.0.0/0 ${VPN_IP}[l2tp] udp -P out ipsec
+	esp/transport//require;
+spdadd ${VPN_IP}[l2tp] 0.0.0.0/0 udp -P in ipsec
+	esp/transport//require;
+EOT
 
 # Run racoon.
 racoon -f racoon.conf -F &
