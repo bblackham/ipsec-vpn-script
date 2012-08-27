@@ -15,7 +15,7 @@ There are some dependencies. These are:
  * ipsec-tools (for setkey)
  * xl2tpd
  * iproute
- * a Linux kernel that supports IPSec
+ * a 2.6 Linux kernel that supports IPSec (not openswan)
 
 On Debian/Ubuntu systems, this will get the required dependencies:
 
@@ -25,7 +25,7 @@ Running
 -------
 
 At present, the script only supports IPSec/L2TP tunnels with a pre-shared key.
-Certificate-based setups are not support (though probably aren't difficult to
+Certificate-based setups are not supported (though probably aren't difficult to
 adapt for).
 
 Modify vpn.cfg to suit your VPN. This file should be fairly self-explanatory.
