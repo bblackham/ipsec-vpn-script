@@ -28,7 +28,7 @@ At present, the script only supports IPSec/L2TP tunnels with a pre-shared key.
 Certificate-based setups are not support (though probably aren't difficult to
 adapt for).
 
-Modify vpn.cfg to suit your VPN. This file should be fairly descriptive.
+Modify vpn.cfg to suit your VPN. This file should be fairly self-explanatory.
 
 To start the VPN, simply run
 

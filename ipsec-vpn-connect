@@ -15,7 +15,7 @@ DEBUG=0
 [ -r "$1" ] || error "Could not read configuration file $1."
 cfgfile="`readlink -f $1`"
 . $cfgfile
-[ -z "$VPN_IP" ] && error "VPN_IP is not set"
+[ -z "$VPN_SERVER" ] && error "VPN_SERVER is not set"
 [ -z "$TUNNEL_PSK" ] && error "TUNNEL_PSK is not set"
 [ -z "$VPN_USERNAME" ] && error "VPN_USERNAME is not set"
 [ -z "$VPN_PASSWORD" ] && error "VPN_PASSWORD is not set"
@@ -57,6 +57,18 @@ missing_prereqs=`check_prereqs ip racoon xl2tpd-control setkey killall` || \
 # Ensure xl2tpd is running.
 killall -0 xl2tpd >/dev/null 2>&1 || error "Did not detect xl2tpd running?"
 
+# Translate hostname to IP address.
+get_ip_address() {
+    host=$1
+    getent ahostsv4 $host | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[ \t]/ { print $1 ; exit 0 }'
+}
+[ "$DEBUG" -ge 1 ] && \
+    echo -n "Looking up IP address for VPN server ($VPN_SERVER) ... "
+vpn_ip=`get_ip_address $VPN_SERVER`
+[ "$DEBUG" -ge 1 ] && echo "$vpn_ip"
+[ -z "$vpn_ip" ] && \
+    error "Failed to resolve IP address of VPN server ($VPN_SERVER)."
+
 # Create a temporary directory where we will do our work.
 work_dir=`mktemp -d` || exit 1
 [ -n "$work_dir" ] || exit 1
@@ -69,7 +81,7 @@ cleanup() {
 	xl2tpd-control disconnect $xl2tpd_vpnname
 	xl2tpd-control remove $xl2tpd_vpnname
 	[ -n "$racoon_pid" ] && graceful_kill $racoon_pid
-	[ "$SEND_ALL_TRAFFIC" = 1 ] && ip route delete $VPN_IP
+	[ "$SEND_ALL_TRAFFIC" = 1 ] && ip route delete $vpn_ip
 	[ -n "$work_dir" ] && rm -rf "$work_dir"
 	[ -n "$logger_pid" ] && graceful_kill $logger_pid
 	exit 0
@@ -85,7 +97,7 @@ log $racoon_debug_level;
 path pre_shared_key "psk.txt";
 
 # Remote configuration based loosely on what OS X does.
-remote $VPN_IP {
+remote $vpn_ip {
 	doi ipsec_doi;
 	situation identity_only;
 	exchange_mode main;
@@ -145,14 +157,14 @@ remote $VPN_IP {
 	}
 }
 
-sainfo address 0.0.0.0/0 udp address ${VPN_IP} [1701] udp {
+sainfo address 0.0.0.0/0 udp address ${vpn_ip} [1701] udp {
 	encryption_algorithm aes 256, aes, 3des;
 	authentication_algorithm hmac_sha1, hmac_md5;
 	compression_algorithm deflate;
 	lifetime time 3600 sec;
 }
 
-sainfo address ${VPN_IP} [1701] udp address 0.0.0.0/0 udp {
+sainfo address ${vpn_ip} [1701] udp address 0.0.0.0/0 udp {
 	encryption_algorithm aes 256, aes, 3des;
 	authentication_algorithm hmac_sha1, hmac_md5;
 	compression_algorithm deflate;
@@ -187,15 +199,15 @@ if [ "$DEBUG" -ge 1 ] ; then
 fi
 
 # Fix a route to the VPN in case routing tables change.
-ip route add `ip route get ${VPN_IP} | head -1`
+ip route add `ip route get ${vpn_ip} | head -1`
 
 # Set up IPSec policy
 cat <<EOT | setkey -c
-spddelete 0.0.0.0/0 ${VPN_IP}[l2tp] udp -P out ;
-spddelete ${VPN_IP}[l2tp] 0.0.0.0/0 udp -P in ;
-spdadd 0.0.0.0/0 ${VPN_IP}[l2tp] udp -P out ipsec
+spddelete 0.0.0.0/0 ${vpn_ip}[l2tp] udp -P out ;
+spddelete ${vpn_ip}[l2tp] 0.0.0.0/0 udp -P in ;
+spdadd 0.0.0.0/0 ${vpn_ip}[l2tp] udp -P out ipsec
 	esp/transport//require;
-spdadd ${VPN_IP}[l2tp] 0.0.0.0/0 udp -P in ipsec
+spdadd ${vpn_ip}[l2tp] 0.0.0.0/0 udp -P in ipsec
 	esp/transport//require;
 EOT
 
@@ -209,7 +221,7 @@ sleep 1
 # Create xl2tpd configuration
 xl2tpd-control remove $xl2tpd_vpnname
 xl2tpd-control add $xl2tpd_vpnname \
-	"lns=$VPN_IP" \
+	"lns=$vpn_ip" \
 	"redial=no" \
 	"require pap=no" \
 	"require chap = yes" \
